@@ -24,7 +24,8 @@
 namespace RTC
 {
 
-void Init();
+bool Init();
+void DeInit();
 void Reset();
 
 u16 Read();

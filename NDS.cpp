@@ -91,8 +91,8 @@ u32 DMA9Fill[4];
 
 u16 IPCSync9, IPCSync7;
 u16 IPCFIFOCnt9, IPCFIFOCnt7;
-FIFO* IPCFIFO9; // FIFO in which the ARM9 writes
-FIFO* IPCFIFO7;
+FIFO<u32>* IPCFIFO9; // FIFO in which the ARM9 writes
+FIFO<u32>* IPCFIFO7;
 
 u16 DivCnt;
 u32 DivNumerator[2];
@@ -111,7 +111,7 @@ u16 _soundbias; // temp
 bool Running;
 
 
-void Init()
+bool Init()
 {
     ARM9 = new ARM(0);
     ARM7 = new ARM(1);
@@ -125,15 +125,33 @@ void Init()
     DMAs[6] = new DMA(1, 2);
     DMAs[7] = new DMA(1, 3);
 
-    IPCFIFO9 = new FIFO(16);
-    IPCFIFO7 = new FIFO(16);
+    IPCFIFO9 = new FIFO<u32>(16);
+    IPCFIFO7 = new FIFO<u32>(16);
 
-    NDSCart::Init();
-    GPU::Init();
-    SPI::Init();
-    RTC::Init();
+    if (!NDSCart::Init()) return false;
+    if (!GPU::Init()) return false;
+    if (!SPI::Init()) return false;
+    if (!RTC::Init()) return false;
 
     Reset();
+    return true;
+}
+
+void DeInit()
+{
+    delete ARM9;
+    delete ARM7;
+
+    for (int i = 0; i < 8; i++)
+        delete DMAs[i];
+
+    delete IPCFIFO9;
+    delete IPCFIFO7;
+
+    NDSCart::DeInit();
+    GPU::DeInit();
+    SPI::DeInit();
+    RTC::DeInit();
 }
 
 
@@ -289,9 +307,8 @@ void Reset()
     // test
     //LoadROM();
     //LoadFirmware();
-    NDSCart::LoadROM("rom/sm64ds.nds");
-
-    Running = true; // hax
+    if (NDSCart::LoadROM("rom/nsmb.nds"))
+        Running = true; // hax
 }
 
 
@@ -1270,6 +1287,10 @@ u8 ARM9IORead8(u32 addr)
     {
         return GPU::GPU2D_B->Read8(addr);
     }
+    if (addr >= 0x04000320 && addr < 0x040006A4)
+    {
+        return GPU3D::Read8(addr);
+    }
 
     printf("unknown ARM9 IO read8 %08X\n", addr);
     return 0;
@@ -1346,6 +1367,10 @@ u16 ARM9IORead16(u32 addr)
     {
         return GPU::GPU2D_B->Read16(addr);
     }
+    if (addr >= 0x04000320 && addr < 0x040006A4)
+    {
+        return GPU3D::Read16(addr);
+    }
 
     printf("unknown ARM9 IO read16 %08X %08X\n", addr, ARM9->R[15]);
     return 0;
@@ -1400,8 +1425,6 @@ u32 ARM9IORead32(u32 addr)
     case 0x040002B8: return SqrtVal[0];
     case 0x040002BC: return SqrtVal[1];
 
-    case 0x04000600: return 0x06000000; // hax
-
     case 0x04100000:
         if (IPCFIFOCnt9 & 0x8000)
         {
@@ -1438,8 +1461,7 @@ u32 ARM9IORead32(u32 addr)
     }
     if (addr >= 0x04000320 && addr < 0x040006A4)
     {
-        // 3D GPU
-        return 0;
+        return GPU3D::Read32(addr);
     }
 
     printf("unknown ARM9 IO read32 %08X\n", addr);
@@ -1502,6 +1524,11 @@ void ARM9IOWrite8(u32 addr, u8 val)
     if (addr >= 0x04001000 && addr < 0x04001060)
     {
         GPU::GPU2D_B->Write8(addr, val);
+        return;
+    }
+    if (addr >= 0x04000320 && addr < 0x040006A4)
+    {
+        GPU3D::Write8(addr, val);
         return;
     }
 
@@ -1623,7 +1650,7 @@ void ARM9IOWrite16(u32 addr, u16 val)
     }
     if (addr >= 0x04000320 && addr < 0x040006A4)
     {
-        // 3D GPU
+        GPU3D::Write16(addr, val);
         return;
     }
 
@@ -1701,8 +1728,8 @@ void ARM9IOWrite32(u32 addr, u32 val)
     case 0x040001B4: *(u32*)&ROMSeed1[0] = val; return;
 
     case 0x04000208: IME[0] = val & 0x1; return;
-    case 0x04000210: IE[0] = val; if (val&~0x000F2F7F)printf("unusual IRQ %08X\n",val);return;
-    case 0x04000214: IF[0] &= ~val; return;
+    case 0x04000210: IE[0] = val; return;
+    case 0x04000214: IF[0] &= ~val; GPU3D::CheckFIFOIRQ(); return;
 
     case 0x04000240:
         GPU::MapVRAM_AB(0, val & 0xFF);
@@ -1742,7 +1769,7 @@ void ARM9IOWrite32(u32 addr, u32 val)
     }
     if (addr >= 0x04000320 && addr < 0x040006A4)
     {
-        // 3D GPU
+        GPU3D::Write32(addr, val);
         return;
     }
 

@@ -16,57 +16,26 @@
     with melonDS. If not, see http://www.gnu.org/licenses/.
 */
 
-#include "FIFO.h"
+#ifndef GPU3D_H
+#define GPU3D_H
 
-
-FIFO::FIFO(u32 num)
+namespace GPU3D
 {
-    NumEntries = num;
-    Entries = new u32[num];
-    Clear();
+
+bool Init();
+void DeInit();
+void Reset();
+
+void Run(s32 cycles);
+void CheckFIFOIRQ();
+
+u8 Read8(u32 addr);
+u16 Read16(u32 addr);
+u32 Read32(u32 addr);
+void Write8(u32 addr, u8 val);
+void Write16(u32 addr, u16 val);
+void Write32(u32 addr, u32 val);
+
 }
 
-FIFO::~FIFO()
-{
-    delete[] Entries;
-}
-
-void FIFO::Clear()
-{
-    NumOccupied = 0;
-    ReadPos = 0;
-    WritePos = 0;
-    Entries[ReadPos] = 0;
-}
-
-void FIFO::Write(u32 val)
-{
-    if (IsFull()) return;
-
-    Entries[WritePos] = val;
-
-    WritePos++;
-    if (WritePos >= NumEntries)
-        WritePos = 0;
-
-    NumOccupied++;
-}
-
-u32 FIFO::Read()
-{
-    u32 ret = Entries[ReadPos];
-    if (IsEmpty())
-        return ret;
-
-    ReadPos++;
-    if (ReadPos >= NumEntries)
-        ReadPos = 0;
-
-    NumOccupied--;
-    return ret;
-}
-
-u32 FIFO::Peek()
-{
-    return Entries[ReadPos];
-}
+#endif
