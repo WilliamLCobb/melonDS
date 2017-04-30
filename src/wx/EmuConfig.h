@@ -16,31 +16,28 @@
     with melonDS. If not, see http://www.gnu.org/licenses/.
 */
 
-#ifndef SPI_H
-#define SPI_H
+#ifndef WX_EMUCONFIG_H
+#define WX_EMUCONFIG_H
 
-namespace SPI_TSC
-{
-
-void SetTouchCoords(u16 x, u16 y);
-
-}
-
-namespace SPI
-{
-
-extern u16 Cnt;
-
-bool Init();
-void DeInit();
-void Reset();
-
-u16 ReadCnt();
-void WriteCnt(u16 val);
-
-u8 ReadData();
-void WriteData(u8 val);
-
-}
-
+#include <wx/wxprec.h>
+#ifndef WX_PRECOMP
+#include <wx/wx.h>
 #endif
+
+class EmuConfigDialog : public wxDialog
+{
+public:
+    EmuConfigDialog(wxWindow* parent);
+    ~EmuConfigDialog();
+
+private:
+    wxDECLARE_EVENT_TABLE();
+
+    void OnOk(wxCommandEvent& event);
+    void OnCancel(wxCommandEvent& event);
+
+    wxCheckBox* cbDirectBoot;
+};
+
+#endif // WX_EMUCONFIG_H
+

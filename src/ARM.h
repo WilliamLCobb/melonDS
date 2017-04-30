@@ -43,7 +43,17 @@ public:
 
     void Halt(u32 halt)
     {
+        if (halt==2 && Halted==1) return;
         Halted = halt;
+    }
+
+    void CheckIRQ()
+    {
+        if (!(NDS::IME[Num] & 0x1)) return;
+        if (NDS::IF[Num] & NDS::IE[Num])
+        {
+            TriggerIRQ();
+        }
     }
 
     s32 Execute();
@@ -125,7 +135,7 @@ public:
         else
             val = NDS::ARM7Read8(addr);
 
-        Cycles += Waitstates[3][(addr>>24)&0xF];
+        Cycles += Waitstates[2][(addr>>24)&0xF];
         return val;
     }
 
@@ -171,7 +181,7 @@ public:
         else
             NDS::ARM7Write8(addr, val);
 
-        Cycles += Waitstates[3][(addr>>24)&0xF];
+        Cycles += Waitstates[2][(addr>>24)&0xF];
     }
 
     void DataWrite16(u32 addr, u16 val, u32 forceuser=0)

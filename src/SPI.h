@@ -16,19 +16,41 @@
     with melonDS. If not, see http://www.gnu.org/licenses/.
 */
 
-#ifndef WIFI_H
-#define WIFI_H
+#ifndef SPI_H
+#define SPI_H
 
-namespace Wifi
+namespace SPI_Firmware
 {
 
-//
+void SetupDirectBoot();
 
+u8 GetConsoleType();
+u8 GetWifiVersion();
+u8 GetRFVersion();
 
+}
+
+namespace SPI_TSC
+{
+
+void SetTouchCoords(u16 x, u16 y);
+
+}
+
+namespace SPI
+{
+
+extern u16 Cnt;
+
+bool Init();
+void DeInit();
 void Reset();
 
-u16 Read(u32 addr);
-void Write(u32 addr, u16 val);
+u16 ReadCnt();
+void WriteCnt(u16 val);
+
+u8 ReadData();
+void WriteData(u8 val);
 
 }
 

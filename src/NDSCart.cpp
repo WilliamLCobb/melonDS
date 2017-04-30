@@ -68,6 +68,10 @@ void DeInit()
 
 void Reset()
 {
+    if (SRAM) delete[] SRAM;
+    if (Discover_Buffer) delete[] Discover_Buffer;
+    SRAM = NULL;
+    Discover_Buffer = NULL;
 }
 
 void LoadSave(char* path)
@@ -193,6 +197,7 @@ void SetMemoryType()
     CurCmd = prev_cmd;
 
     delete[] Discover_Buffer;
+    Discover_Buffer = NULL;
 }
 
 void Write_Discover(u8 val, bool islast)
@@ -241,7 +246,7 @@ void Write_Discover(u8 val, bool islast)
                 {
                     Discover_MemoryType = 5;
                 }
-                else if (len > 2+128) // Flash
+                else if ((len > 2+128) || (len > 1+16 && CurCmd == 0xA)) // Flash
                 {
                     Discover_MemoryType = 4;
                 }
@@ -268,7 +273,45 @@ void Write_Null(u8 val, bool islast) {}
 
 void Write_EEPROMTiny(u8 val, bool islast)
 {
-    // TODO
+    switch (CurCmd)
+    {
+    case 0x02:
+    case 0x0A:
+        if (DataPos < 1)
+        {
+            Addr = val;
+            Data = 0;
+        }
+        else
+        {
+            SRAM[(Addr + ((CurCmd==0x0A)?0x100:0)) & 0x1FF] = val;
+            Addr++;
+        }
+        break;
+
+    case 0x03:
+    case 0x0B:
+        if (DataPos < 1)
+        {
+            Addr = val;
+            Data = 0;
+        }
+        else
+        {
+            Data = SRAM[(Addr + ((CurCmd==0x0B)?0x100:0)) & 0x1FF];
+            Addr++;
+        }
+        break;
+
+    case 0x9F:
+        Data = 0xFF;
+        break;
+
+    default:
+        if (DataPos==0)
+            printf("unknown tiny EEPROM save command %02X\n", CurCmd);
+        break;
+    }
 }
 
 void Write_EEPROM(u8 val, bool islast)
@@ -318,6 +361,20 @@ void Write_Flash(u8 val, bool islast)
 {
     switch (CurCmd)
     {
+    case 0x02:
+        if (DataPos < 3)
+        {
+            Addr <<= 8;
+            Addr |= val;
+            Data = 0;
+        }
+        else
+        {
+            SRAM[Addr & (SRAMLength-1)] = 0;
+            Addr++;
+        }
+        break;
+
     case 0x03:
         if (DataPos < 3)
         {
@@ -327,12 +384,7 @@ void Write_Flash(u8 val, bool islast)
         }
         else
         {
-            // CHECKME: does Flash also wraparound when the address is out of bounds?
-            if (Addr >= SRAMLength)
-                Data = 0;
-            else
-                Data = SRAM[Addr];
-
+            Data = SRAM[Addr & (SRAMLength-1)];
             Addr++;
         }
         break;
@@ -346,15 +398,47 @@ void Write_Flash(u8 val, bool islast)
         }
         else
         {
-            if (Addr < SRAMLength)
-                SRAM[Addr] = val;
-
+            SRAM[Addr & (SRAMLength-1)] = val;
             Addr++;
         }
         break;
 
     case 0x9F:
         Data = 0xFF;
+        break;
+
+    case 0xD8:
+        if (DataPos < 3)
+        {
+            Addr <<= 8;
+            Addr |= val;
+            Data = 0;
+        }
+        if (DataPos == 2)
+        {
+            for (u32 i = 0; i < 0x10000; i++)
+            {
+                SRAM[Addr & (SRAMLength-1)] = 0;
+                Addr++;
+            }
+        }
+        break;
+
+    case 0xDB:
+        if (DataPos < 3)
+        {
+            Addr <<= 8;
+            Addr |= val;
+            Data = 0;
+        }
+        if (DataPos == 2)
+        {
+            for (u32 i = 0; i < 0x100; i++)
+            {
+                SRAM[Addr & (SRAMLength-1)] = 0;
+                Addr++;
+            }
+        }
         break;
 
     default:
@@ -387,11 +471,20 @@ void Write(u8 val, u32 hold)
 
     switch (CurCmd)
     {
+    case 0x00:
+        // Pokémon carts have an IR transceiver thing, and send this
+        // to bypass it and access SRAM.
+        // TODO: design better
+        CurCmd = val;
+        break;
+
     case 0x02:
     case 0x03:
     case 0x0A:
     case 0x0B:
     case 0x9F:
+    case 0xD8:
+    case 0xDB:
         WriteFunc(val, islast);
         DataPos++;
         break;
@@ -412,11 +505,11 @@ void Write(u8 val, u32 hold)
 
     default:
         if (DataPos==0)
-            printf("unknown save SPI command %02X\n", CurCmd);
+            printf("unknown save SPI command %02X %08X\n", CurCmd);
         break;
     }
 
-    if (islast && (CurCmd == 0x02 || CurCmd == 0x0A))
+    if (islast && (CurCmd == 0x02 || CurCmd == 0x0A) && (SRAMLength > 0))
     {
         FILE* f = fopen(SRAMPath, "wb");
         if (f)
@@ -565,11 +658,15 @@ bool Init()
 {
     if (!NDSCart_SRAM::Init()) return false;
 
+    CartROM = NULL;
+
     return true;
 }
 
 void DeInit()
 {
+    if (CartROM) delete[] CartROM;
+
     NDSCart_SRAM::DeInit();
 }
 
@@ -589,6 +686,7 @@ void Reset()
     DataOutLen = 0;
 
     CartInserted = false;
+    if (CartROM) delete[] CartROM;
     CartROM = NULL;
     CartROMSize = 0;
     CartID = 0;
@@ -601,10 +699,12 @@ void Reset()
 }
 
 
-bool LoadROM(char* path)
+bool LoadROM(const char* path, bool direct)
 {
     // TODO: streaming mode? for really big ROMs or systems with limited RAM
     // for now we're lazy
+
+    if (CartROM) delete[] CartROM;
 
     FILE* f = fopen(path, "rb");
     if (!f)
@@ -632,10 +732,11 @@ bool LoadROM(char* path)
     fclose(f);
     //CartROM = f;
 
-    // temp. TODO: later make this user selectable
-    // calling this sets up shit for booting from the cart directly.
-    // normal behavior is booting from the BIOS.
-    NDS::SetupDirectBoot();
+    if (direct)
+    {
+        NDS::SetupDirectBoot();
+        CmdEncMode = 2;
+    }
 
     CartInserted = true;
 
@@ -650,7 +751,7 @@ bool LoadROM(char* path)
         if (arm9base >= 0x4000)
         {
             // reencrypt secure area if needed
-            if (*(u32*)&CartROM[arm9base] == 0xE7FFDEFF)
+            if (*(u32*)&CartROM[arm9base] == 0xE7FFDEFF && *(u32*)&CartROM[arm9base+0x10] != 0xE7FFDEFF)
             {
                 printf("Re-encrypting cart secure area\n");
 
@@ -696,6 +797,8 @@ void ReadROM(u32 addr, u32 len, u32 offset)
 
 void ReadROM_B7(u32 addr, u32 len, u32 offset)
 {
+    if (!CartInserted) return;
+
     addr &= (CartROMSize-1);
     if (!CartIsHomebrew)
     {
@@ -707,13 +810,12 @@ void ReadROM_B7(u32 addr, u32 len, u32 offset)
 }
 
 
-void EndTransfer()
+void ROMEndTransfer(u32 param)
 {
-    ROMCnt &= ~(1<<23);
     ROMCnt &= ~(1<<31);
 
     if (SPICnt & (1<<14))
-        NDS::TriggerIRQ((NDS::ExMemCnt[0]>>11)&0x1, NDS::IRQ_CartSendDone);
+        NDS::SetIRQ((NDS::ExMemCnt[0]>>11)&0x1, NDS::IRQ_CartSendDone);
 }
 
 void ROMPrepareData(u32 param)
@@ -726,16 +828,16 @@ void ROMPrepareData(u32 param)
     DataOutPos += 4;
 
     ROMCnt |= (1<<23);
-    NDS::CheckDMAs(0, 0x06);
-    NDS::CheckDMAs(1, 0x12);
 
-    //if (DataOutPos < DataOutLen)
-    //    NDS::ScheduleEvent((ROMCnt & (1<<27)) ? 8:5, ROMPrepareData, 0);
+    if (NDS::ExMemCnt[0] & (1<<11))
+        NDS::CheckDMAs(1, 0x12);
+    else
+        NDS::CheckDMAs(0, 0x05);
 }
 
 void WriteROMCnt(u32 val)
 {
-    ROMCnt = val & 0xFF7F7FFF;
+    ROMCnt = (val & 0xFF7F7FFF) | (ROMCnt & 0x00800000);
 
     if (!(SPICnt & (1<<15))) return;
 
@@ -819,7 +921,7 @@ void WriteROMCnt(u32 val)
         break;
 
     case 0x3C:
-        CmdEncMode = 1;
+        if (CartInserted) CmdEncMode = 1;
         break;
 
     case 0xB7:
@@ -864,52 +966,43 @@ void WriteROMCnt(u32 val)
         break;
     }
 
-    //ROMCnt &= ~(1<<23);
-    ROMCnt |= (1<<23);
+    ROMCnt &= ~(1<<23);
+
+    // ROM transfer timings
+    // the bus is parallel with 8 bits
+    // thus a command would take 8 cycles to be transferred
+    // and it would take 4 cycles to receive a word of data
+    // TODO: advance read position if bit28 is set
+
+    u32 xfercycle = (ROMCnt & (1<<27)) ? 8 : 5;
+    u32 cmddelay = 8 + (ROMCnt & 0x1FFF);
+    if (datasize) cmddelay += ((ROMCnt >> 16) & 0x3F);
 
     if (datasize == 0)
-        EndTransfer();
+        NDS::ScheduleEvent(NDS::Event_ROMTransfer, false, xfercycle*cmddelay, ROMEndTransfer, 0);
     else
-    {
-        NDS::CheckDMAs(0, 0x05);
-        NDS::CheckDMAs(1, 0x12);
-    }
-        //NDS::ScheduleEvent((ROMCnt & (1<<27)) ? 8:5, ROMPrepareData, 0);
+        NDS::ScheduleEvent(NDS::Event_ROMTransfer, true, xfercycle*(cmddelay+4), ROMPrepareData, 0);
 }
 
 u32 ReadROMData()
 {
-    /*if (ROMCnt & (1<<23))
+    if (ROMCnt & (1<<23))
     {
         ROMCnt &= ~(1<<23);
-        if (DataOutPos >= DataOutLen)
-            EndTransfer();
+
+        if (DataOutPos < DataOutLen)
+        {
+            u32 xfercycle = (ROMCnt & (1<<27)) ? 8 : 5;
+            u32 delay = 4;
+            if (!(DataOutPos & 0x1FF)) delay += ((ROMCnt >> 16) & 0x3F);
+
+            NDS::ScheduleEvent(NDS::Event_ROMTransfer, true, xfercycle*delay, ROMPrepareData, 0);
+        }
+        else
+            ROMEndTransfer(0);
     }
 
-    return ROMDataOut;*/
-    u32 ret;
-    if (DataOutPos >= DataOutLen)
-        ret = 0;
-    else
-        ret = *(u32*)&DataOut[DataOutPos];
-
-    DataOutPos += 4;
-
-    if (DataOutPos == DataOutLen)
-        EndTransfer();
-
-    return ret;
-}
-
-void DMA(u32 addr)
-{
-    void (*writefn)(u32,u32) = (NDS::ExMemCnt[0] & (1<<11)) ? NDS::ARM7Write32 : NDS::ARM9Write32;
-    for (u32 i = 0; i < DataOutLen; i+=4)
-    {
-        writefn(addr+i, *(u32*)&DataOut[i]);
-    }
-
-    EndTransfer();
+    return ROMDataOut;
 }
 
 

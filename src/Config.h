@@ -16,26 +16,25 @@
     with melonDS. If not, see http://www.gnu.org/licenses/.
 */
 
-#ifndef GPU3D_H
-#define GPU3D_H
+#ifndef CONFIG_H
+#define CONFIG_H
 
-namespace GPU3D
+#include "types.h"
+
+namespace Config
 {
 
-bool Init();
-void DeInit();
-void Reset();
+void Load();
+void Save();
 
-void Run(s32 cycles);
-void CheckFIFOIRQ();
+extern int KeyMapping[12];
+extern int JoyMapping[12];
 
-u8 Read8(u32 addr);
-u16 Read16(u32 addr);
-u32 Read32(u32 addr);
-void Write8(u32 addr, u8 val);
-void Write16(u32 addr, u16 val);
-void Write32(u32 addr, u32 val);
+extern int WindowWidth;
+extern int WindowHeight;
+
+extern int DirectBoot;
 
 }
 
-#endif
+#endif // CONFIG_H
